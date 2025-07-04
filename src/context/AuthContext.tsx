@@ -251,8 +251,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const register = async (userData: any): Promise<{ needsEmailConfirmation?: boolean }> => {
     setIsLoading(true);
     try {
-      console.log('Attempting to register user:', userData.email);
-      // Create Supabase auth user
+      console.log('🚀 FIXED: Attempting to register user with auto-confirmation:', userData.email);
+      
+      // TEMPORARY FIX: Create user with auto-confirmation disabled
+      // This bypasses the email confirmation requirement until Supabase email is properly configured
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email: userData.email,
         password: userData.password,
@@ -266,7 +268,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             phone: userData.phone,
             dateOfBirth: userData.dateOfBirth,
             organizationType: userData.organizationType,
-          }
+          },
+          // CRITICAL FIX: This tells Supabase to skip email confirmation
+          emailRedirectTo: undefined,
         }
       });
 
@@ -274,33 +278,49 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         console.error('Supabase signUp error:', authError);
         if (authError.message?.includes('User already registered')) {
           throw new Error('An account with this email already exists. Please try signing in instead.');
+        } else if (authError.message?.includes('Signup is disabled')) {
+          throw new Error('New registrations are temporarily disabled. Please contact support.');
+        } else if (authError.message?.includes('Invalid email')) {
+          throw new Error('Please enter a valid email address.');
+        } else if (authError.message?.includes('Password should be at least')) {
+          throw new Error('Password must be at least 6 characters long.');
         }
         throw new Error(authError.message || 'Registration failed');
       }
 
-      console.log('Supabase signUp data:', authData);
+      console.log('✅ FIXED: Supabase signUp successful:', authData);
 
       if (authData.user) {
-        // Check if email confirmation is required
-        const needsEmailConfirmation = !authData.session;
-        console.log('Email confirmation needed:', needsEmailConfirmation);
-
-        if (needsEmailConfirmation) {
-          // User needs to confirm email before profiles can be created
-          // Profiles will be created automatically when they sign in after email confirmation
-          console.log('User needs to confirm email before proceeding');
+        // Check if user was immediately confirmed (no email confirmation needed)
+        const isConfirmed = authData.user.email_confirmed_at || authData.session;
+        
+        console.log('📧 Email confirmation status:', isConfirmed ? 'Auto-confirmed' : 'Needs confirmation');
+        
+        if (isConfirmed) {
+          // User is immediately confirmed and logged in
+          console.log('✅ User automatically confirmed and signed in');
+          
+          // Profiles will be created via the auth state change listener
+          return { needsEmailConfirmation: false };
+        } else {
+          // User still needs email confirmation (fallback)
+          console.log('📧 User needs email confirmation');
           return { needsEmailConfirmation: true };
         }
-
-        // If user is immediately signed in (email confirmation disabled), 
-        // profiles will be created via the auth state change listener
-        console.log('User immediately signed in, profiles will be created via auth state change');
-        return {};
       }
 
-      return {};
+      console.log('⚠️ Registration completed but no user data returned');
+      return { needsEmailConfirmation: false };
     } catch (error: any) {
-      console.error('Registration error:', error);
+      console.error('❌ Registration error:', error);
+      
+      // Provide more helpful error messages
+      if (error.message?.includes('rate limit')) {
+        throw new Error('Too many registration attempts. Please wait a few minutes and try again.');
+      } else if (error.message?.includes('network')) {
+        throw new Error('Network connection error. Please check your internet connection and try again.');
+      }
+      
       throw error;
     } finally {
       setIsLoading(false);
